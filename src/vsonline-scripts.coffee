@@ -110,11 +110,12 @@ module.exports = (robot) ->
 
   # Optional env variables to allow override a different environment
   environmentDomain = process.env.HUBOT_VSONLINE_ENV_DOMAIN || "visualstudio.com"
+  vsoAdminRoleName = process.env.HUBOT_VSONLINE_ADMIN_ROLE_NAME || "vsoadmin"
   
   # Required env variables to run in trusted mode
   username = process.env.HUBOT_VSONLINE_USERNAME
   password = process.env.HUBOT_VSONLINE_PASSWORD
-  
+
   
   # Required env variables to run with OAuth (impersonate mode)
   appId = process.env.HUBOT_VSONLINE_APP_ID
@@ -191,6 +192,12 @@ module.exports = (robot) ->
   #########################################
   # VSOnline helper functions
   #########################################
+  assertUserIsVsoAdmin = (msg) ->
+    return true if robot.auth.hasRole(msg.envelope.user, vsoAdminRoleName)
+    
+    msg.reply "Permission denied. Sorry, you're not a VSO admin role."
+    return false
+  
   createVsoClient = ({url, collection, user}) ->
     url ||= accountBaseUrl
     collection ||= accountCollection
@@ -310,7 +317,9 @@ module.exports = (robot) ->
     msg.reply reply
     
   robot.respond /vso set room default ([\w]+)\s*=\s*(.*)\s*$/i, (msg) ->
+    return unless assertUserIsVsoAdmin msg
     return msg.reply "Unknown setting #{msg.match[1]}" unless msg.match[1] of VSO_CONFIG_KEYS_WHITE_LIST
+    
     vsoData.addRoomDefault(msg.envelope.room, msg.match[1], msg.match[2])
     msg.reply "Room default for #{msg.match[1]} set to #{msg.match[2]}"
     
