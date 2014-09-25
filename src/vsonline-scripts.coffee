@@ -11,6 +11,7 @@
 #   HUBOT_VSONLINE_ACCOUNT - The Visual Studio Online account name (Required)
 #   HUBOT_VSONLINE_USERNAME - Alternate credential username (Required in trust mode)
 #   HUBOT_VSONLINE_PASSWORD - Alternate credential password (Required in trust mode)
+#   HUBOT_VSONLINE_USER_IS_SERVICE_ACCOUNT - Indicates if the specified username is a service account. Defaults to false
 #   HUBOT_VSONLINE_APP_ID - Visual Studion Online application ID (Required in impersonate mode)
 #   HUBOT_VSONLINE_APP_SECRET - Visual Studio Online application secret (Required in impersonate mode)
 #   HUBOT_VSONLINE_AUTHORIZATION_CALLBACK_URL - Visual Studio Online application oauth callback (Required in impersonate mode)
@@ -174,6 +175,8 @@ module.exports = (robot) ->
   # Required env variables to run in trusted mode
   username = process.env.HUBOT_VSONLINE_USERNAME
   password = process.env.HUBOT_VSONLINE_PASSWORD
+  isUserServiceAccount = process.env.HUBOT_VSONLINE_USER_IS_SERVICE_ACCOUNT || false
+  
 
   ## Variables to support SSL (optional)
   SSLEnabled        = process.env.HUBOT_VSONLINE_SSL_ENABLE || false
@@ -195,6 +198,7 @@ module.exports = (robot) ->
 
   accountBaseUrl = "https://#{account}.#{environmentDomain}"
   impersonate = if appId then true else false
+  wrapAccessToken = null
 
   robot.logger.info "VSOnline scripts running with impersonate set to #{impersonate}"
 
@@ -259,6 +263,30 @@ client_id=#{appId}\
     return (expiresAt - now) < VSO_TOKEN_CLOSE_TO_EXPIRATION_MS
 
 
+  getWrapAccessToken = (callback) ->
+    robot.logger.debug "Prepare to get a WRAP access token for executing VSO scripts"
+    Client.getWrapToken accountBaseUrl,
+      username,
+      password,
+      (err, data, resp) ->
+        if err
+          robot.logger.error "Error while getting a WRAP access token: #{util.inspect(err)}.\
+           Retrying in 1 minute."
+          setTimeout(()->
+            getWrapAccessToken(callback)
+          , 60000)  #1 minute
+        else
+          robot.logger.info "WRAP access token retrieved with success.\
+            Token expires in #{data.wrap_access_token_expires_in} secs."
+          wrapAccessToken = data.wrap_access_token
+          # Schedule a new request based on expiration
+          setTimeout(()->
+            getWrapAccessToken()
+          , data.wrap_access_token_expires_in * 1000 - 300000)  #5 minutes (300000 ms) before expire
+            
+          if callback
+            callback()
+
   #########################################
   # work items helper functions
   #########################################
@@ -284,6 +312,8 @@ client_id=#{appId}\
     if impersonate
       token = vsoData.getOAuthTokenForUser user.id
       Client.createOAuthClient url, collection, token.access_token, { spsUri: spsBaseUrl , apiVersion : apiVersion }
+    else if isUserServiceAccount
+      Client.createWrapClient url, collection, wrapAccessToken, {apiVersion : apiVersion}
     else
       Client.createClient url, collection, username, password, {apiVersion : apiVersion}
 
@@ -297,7 +327,7 @@ client_id=#{appId}\
       collection ||= accountCollection
       client = createVsoClient url: url, collection: collection, user: user, apiVersion: apiVersion
       cmd(client)
-
+      
     if impersonate and accessTokenExpired(user)
       robot.logger.info "VSO token expired for user #{user.id}. Let's refresh"
       token = vsoData.getOAuthTokenForUser(user.id)
@@ -308,7 +338,8 @@ client_id=#{appId}\
         success: vsoCmd
         error: (err, res) ->
           msg.reply "Your authorization to Hubot has been revoked or has expired."
-
+    else if not impersonate and isUserServiceAccount and not wrapAccessToken
+      robot.logger.error "Cannot run VSO commands while WRAP access token not set"
     else
       vsoCmd()
 
@@ -421,6 +452,12 @@ client_id=#{appId}\
           </html>"""
 
   #########################################
+  # Service Account bootstrap
+  #########################################
+  else if isUserServiceAccount
+    getWrapAccessToken()
+
+  #########################################
   # Profile related commands
   #########################################
   robot.respond /vso me(\?)*/i, (msg) ->
@@ -482,7 +519,7 @@ client_id=#{appId}\
         else
           definitions.push "Build definitions in account #{account}:"
           for build in buildDefinitions
-            definitions.push "{build.name} (#{build.id})"
+            definitions.push "#{build.name} (#{build.id})"
           msg.reply definitions.join "\n"
 
   robot.respond /vso build (.*)/i, (msg) ->
@@ -764,7 +801,7 @@ client_id=#{appId}\
           status = JSON.parse body
           serviceStatusResponse = "Here is the current status of Visual Studio Online:\n"
           for vsoService in status.value
-           serviceStatusResponse += vsoService.Name + " (" + vsoService.Status + ")\n"
+            serviceStatusResponse += vsoService.Name + " (" + vsoService.Status + ")\n"
           serviceStatusResponse += "Full details: #{VSO_STATUS_URL}"
           msg.reply serviceStatusResponse
         else
