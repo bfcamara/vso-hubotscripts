@@ -43,6 +43,11 @@ In trust mode we need to set the alternate credentials of the user who  will per
 + **HUBOT\_VSONLINE\_USERNAME**: The alternate credentials username
 + **HUBOT\_VSONLINE\_PASSWORD**: The alternate credentials password
 
+We can use a service account instead of a real user by setting the variable **HUBOT\_VSONLINE\_USER\_IS_SERVICE\_ACCOUNT** to `true`.
+In this case, the credentials set shouldn't be the alternate credentials.
+To get a Visual Studio Online service account you can use the [TFS Service Credential Viewer](http://nakedalm.com/getting-service-account-vso-tfs-service-credential-viewer/)
+
+
 *Impersonate Mode*
 
 In impersonate we need to set the variables defined in the application registered in Visual Studio Online
